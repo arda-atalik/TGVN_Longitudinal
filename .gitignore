@@ -1,0 +1,5 @@
+wandb_logs/
+jupyter/
+sbatch_files/logs/
+src/__pycache__/
+scripts/__pycache__/
