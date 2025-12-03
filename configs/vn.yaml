@@ -18,7 +18,7 @@ data:
   val_batch_size: 1
   num_workers: 4
   buffer_size: 11
-  num_echo_train: 1
+  target_acceleration: 15
   center_fraction: 0.5
   
 # Training configuration
@@ -42,7 +42,7 @@ checkpoint:
 logger:
   project: BrainLongitudinal
   entity: arda-atalik
-  name: vn-502M
+  name: vn-15x-502M
   save_dir: wandb_logs
 
 # Hardware configuration

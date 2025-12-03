@@ -14,7 +14,7 @@ class TGVNDataModule(L.LightningDataModule):
         test_batch_size: int = 1,
         workers: int = 4,
         buffer_size: int = 11,
-        num_echo_train: int = 1,
+        target_acceleration: int = 15,
         center_fraction: float = 0.5,
     ):
         super().__init__()
@@ -26,23 +26,23 @@ class TGVNDataModule(L.LightningDataModule):
         self.test_batch_size = test_batch_size
         self.workers = workers
         self.buffer_size = buffer_size
-        self.num_echo_train = num_echo_train
+        self.target_acceleration = target_acceleration
         self.center_fraction = center_fraction
         self.train_transform = TGVNDataTransform(
             buffer_size=self.buffer_size,
-            num_echo_train=self.num_echo_train,
+            acceleration=self.target_acceleration,
             center_fraction=self.center_fraction,
             randomize_mask=True
         )
         self.val_transform = TGVNDataTransform(
             buffer_size=self.buffer_size,
-            num_echo_train=self.num_echo_train,
+            acceleration=self.target_acceleration,
             center_fraction=self.center_fraction,
             randomize_mask=False
         )
         self.test_transform = TGVNDataTransform(
             buffer_size=self.buffer_size,
-            num_echo_train=self.num_echo_train,
+            acceleration=self.target_acceleration,
             center_fraction=self.center_fraction,
             randomize_mask=False
         )

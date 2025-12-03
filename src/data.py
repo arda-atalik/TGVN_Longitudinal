@@ -60,12 +60,11 @@ class SliceDataset(torch.utils.data.Dataset):
         ) as npz:
             prior = npz['volume'].astype(np.float32, copy=False)
 
-        echo_train_length = row['tfactor']
         num_pe = row['num_pe']
         recon_size = eval(row['recshape'])
         return self.transform(
-            kspace, target, prior, recon_size,
-            echo_train_length, num_pe, vol_fname,
+            kspace, target, prior,
+            recon_size, num_pe, vol_fname,
             slice_idx, vol_num_slices, prior_accession
         )
 
@@ -74,19 +73,19 @@ class TGVNDataTransform:
     def __init__(
         self,
         buffer_size: int = 11,
-        num_echo_train: int = 1,
+        acceleration: int = 15,
         center_fraction: float = 0.5,
         randomize_mask: bool = True,
     ):
         assert isinstance(buffer_size, int) and buffer_size % 2 == 1, \
             "Buffer size must be odd"
-        assert isinstance(num_echo_train, int) and num_echo_train >= 1, \
-            "Number of echo trains must be at least 1"
+        assert isinstance(acceleration, int) and acceleration >= 1, \
+            "Acceleration must be at least 1"
         assert 0 < center_fraction <= 1.0, \
             "Center fraction must be in (0, 1]"
 
         self.buffer_size = buffer_size
-        self.num_echo_train = num_echo_train
+        self.acceleration = acceleration
         self.center_fraction = center_fraction
         self.randomize_mask = randomize_mask
         self.eps = 1e-6
@@ -97,7 +96,6 @@ class TGVNDataTransform:
         target: np.ndarray,
         prior: np.ndarray,
         recon_size: Tuple[int, int],
-        echo_train_length: int,
         num_pe: int,
         vol_fname: str,
         slice_idx: int,
@@ -112,8 +110,7 @@ class TGVNDataTransform:
         # We store the minimum and maximum of the target
         # to use it in the loss calculation
         min_target, max_target = target.min(), target.max()
-
-        num_samples = self.num_echo_train * echo_train_length
+        num_samples = num_pe // self.acceleration
         num_center_lines = int(self.center_fraction * num_samples)
         num_outside_lines = num_samples - num_center_lines
         l_outside_lines = num_outside_lines // 2

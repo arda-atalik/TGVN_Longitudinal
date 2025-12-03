@@ -415,7 +415,7 @@ def main():
         val_batch_size=config.data.val_batch_size,
         workers=config.data.num_workers,
         buffer_size=config.data.buffer_size,
-        num_echo_train=config.data.num_echo_train,
+        target_acceleration=config.data.target_acceleration,
         center_fraction=config.data.center_fraction,
     )
 
