@@ -19,7 +19,7 @@ data:
   val_batch_size: 1
   num_workers: 4
   buffer_size: 11
-  target_acceleration: 15
+  target_acceleration: 20
   center_fraction: 0.5
   
 # Training configuration
@@ -43,12 +43,12 @@ checkpoint:
 logger:
   project: BrainLongitudinal
   entity: arda-atalik
-  name: tgvn-15x-502M
+  name: tgvn-20x-502M
   save_dir: wandb_logs
 
 # Hardware configuration
 hardware:
   accelerator: gpu
-  devices: 4
+  devices: 2
   strategy: ddp
-  num_nodes: 1
+  num_nodes: 4

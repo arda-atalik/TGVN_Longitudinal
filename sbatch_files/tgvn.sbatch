@@ -1,11 +1,12 @@
 #!/bin/bash
-#SBATCH --partition=a100_long
-#SBATCH --nodes=1                     # Request 1 node
-#SBATCH --ntasks-per-node=4           # Four tasks per node
+#SBATCH --partition=a100_long,radiology
+#SBATCH --nodes=4                     # Request 4 nodes
+##SBATCH --exclude=a100-4038,a100-4039
+#SBATCH --ntasks-per-node=2           # Two tasks per node
 #SBATCH --cpus-per-task=4             # CPUs per task
 #SBATCH --mem=160G                    # Memory per node
-#SBATCH --gres=gpu:a100:4             # Request 4 A100 GPUs per node
-#SBATCH --time=14-00:00:00            # 14 day training
+#SBATCH --gres=gpu:a100:2             # Request 2 A100 GPUs per node
+#SBATCH --time=05-00:00:00            # 5 day training
 #SBATCH --job-name=train
 #SBATCH --output=logs/tgvn_%j.out
 #SBATCH --error=logs/tgvn_%j.err
