@@ -10,7 +10,7 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.loggers import WandbLogger
 from torch.optim import Adam, AdamW
 from omegaconf import OmegaConf
-from typing import Optional
+from typing import Optional, Tuple
 from src.models import VN, TGVN
 from src.loss import (
     SSIMLoss, EASSIMLoss, EAL1Loss, ValMetrics
@@ -113,6 +113,8 @@ class TGVNLightning(L.LightningModule):
         sens_chans: int = 18,
         Phi_chans: int = 25,
         H_chans: int = 25,
+        H_in_chans: int = 11,
+        H_prior_split: Optional[Tuple[int, int]] = None,
         loss_function: str = 'ssim',
         edge_weight: Optional[float] = None,
         learning_rate: float = 3e-4,
@@ -132,7 +134,9 @@ class TGVNLightning(L.LightningModule):
                 num_cascades=num_cascades,
                 sens_chans=sens_chans,
                 Phi_chans=Phi_chans,
-                H_chans=H_chans
+                H_chans=H_chans,
+                H_in_chans=H_in_chans,
+                H_prior_split=H_prior_split,
             )
         elif self.model_type == 'VN':
             self.model = VN(
@@ -425,6 +429,8 @@ def main():
         sens_chans=config.model.sens_chans,
         Phi_chans=config.model.Phi_chans,
         H_chans=config.model.get('H_chans', None),
+        H_in_chans=config.model.get('H_in_chans', None),
+        H_prior_split=config.model.get('H_prior_split', None),
         loss_function=config.training.loss_function,
         edge_weight=config.training.get('edge_weight', None),
         learning_rate=config.optimization.learning_rate,

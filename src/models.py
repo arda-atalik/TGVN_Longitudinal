@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from typing import Tuple
+from typing import Tuple, Optional
 from torch.nn import functional as F
 from .math_utils import (
     norm_tensor, unnorm_tensor, itfftc,
@@ -277,6 +277,7 @@ class DualEncoderUnet(nn.Module):
         chans: int = 32,
         num_pool_layers: int = 4,
         drop_prob: float = 0.0,
+        prior_split: Optional[Tuple[int, int]] = None,  # e.g. (11, 11)
     ):
         super().__init__()
 
@@ -286,15 +287,39 @@ class DualEncoderUnet(nn.Module):
         self.chans = chans
         self.num_pool_layers = num_pool_layers
         self.drop_prob = drop_prob
+        self.prior_split = prior_split
 
         #  Encoder for s (prior input)
-        self.down_sample_layers_s = nn.ModuleList(
-            [ConvBlock(in_chans_s, chans, drop_prob)]
-        )
-        ch = chans
-        for _ in range(num_pool_layers - 1):
-            self.down_sample_layers_s.append(ConvBlock(ch, ch * 2, drop_prob))
-            ch *= 2
+        if self.prior_split is not None:
+            assert sum(self.prior_split) == self.in_chans_s, (
+                f"sum(prior_split) must equal in_chans_s "
+                f"({sum(self.prior_split)} != {self.in_chans_s})"
+            )
+
+            # modality-specific stems for prior (e.g., T2w vs FLAIR), then fuse
+            self.stem_s_a = ConvBlock(self.prior_split[0], chans, drop_prob)
+            self.stem_s_b = ConvBlock(self.prior_split[1], chans, drop_prob)
+            self.stem_s_fuse = nn.Conv2d(2 * chans, chans, kernel_size=1)
+
+            # Remaining prior encoder pyramid AFTER stem fusion
+            self.down_sample_layers_s = nn.ModuleList()
+            ch_s = chans
+            for _ in range(num_pool_layers - 1):
+                self.down_sample_layers_s.append(
+                    ConvBlock(ch_s, ch_s * 2, drop_prob)
+                )
+                ch_s *= 2
+        else:
+            # Original single-stream prior encoder
+            self.down_sample_layers_s = nn.ModuleList(
+                [ConvBlock(in_chans_s, chans, drop_prob)]
+            )
+            ch_s = chans
+            for _ in range(num_pool_layers - 1):
+                self.down_sample_layers_s.append(
+                    ConvBlock(ch_s, ch_s * 2, drop_prob)
+                )
+                ch_s *= 2
 
         #  Encoder for x (current estimate)
         self.down_sample_layers_x = nn.ModuleList(
@@ -307,7 +332,7 @@ class DualEncoderUnet(nn.Module):
             )
             ch_x *= 2
 
-        assert ch == ch_x, "s and x encoders must end with same channel count"
+        assert ch_s == ch_x, "s and x encoders must end with same chans"
 
         #  Skip fusion (concat + 1x1 conv)
         #  We fuse s- and x-features at each scale into a single skip tensor
@@ -325,15 +350,14 @@ class DualEncoderUnet(nn.Module):
         ])
 
         #  Bottleneck fusion and conv
-        self.bottom_fuse = nn.Conv2d(2 * ch, ch, kernel_size=1)
-        self.conv = ConvBlock(ch, ch * 2, drop_prob)
+        self.bottom_fuse = nn.Conv2d(2 * ch_s, ch_s, kernel_size=1)
+        self.conv = ConvBlock(ch_s, ch_s * 2, drop_prob)
 
         #  Decoder (same as original U-net)
         self.up_conv = nn.ModuleList()
         self.up_transpose_conv = nn.ModuleList()
 
-        # ch here is channels before bottleneck (same as original)
-        # After self.conv, bottleneck feature has 2*ch channels.
+        ch = ch_s  # channels before bottleneck; after self.conv it's 2*ch
         for _ in range(num_pool_layers - 1):
             self.up_transpose_conv.append(TransposeConvBlock(ch * 2, ch))
             self.up_conv.append(ConvBlock(ch * 2, ch, drop_prob))
@@ -351,49 +375,77 @@ class DualEncoderUnet(nn.Module):
         """
         Args:
             s: Prior input tensor of shape (N, in_chans_s, H, W).
+            If prior_split is set, channels are assumed concatenated.
             x: Current estimate tensor of shape (N, in_chans_x, H, W).
 
         Returns:
             Output tensor of shape (N, out_chans, H, W).
         """
         stack = []
-        out_s = s
         out_x = x
 
-        #  Down-sampling / encoding
-        for layer_s, layer_x, fuse_conv in zip(
-            self.down_sample_layers_s,
-            self.down_sample_layers_x,
-            self.skip_fuse_convs,
-        ):
-            out_s = layer_s(out_s)  # (N, C_l, H_l, W_l)
-            out_x = layer_x(out_x)  # (N, C_l, H_l, W_l)
+        if self.prior_split is not None:
+            a, b = torch.split(s, list(self.prior_split), dim=1)
 
-            # Fuse s and x features at this scale for decoder skip
-            fused = torch.cat([out_s, out_x], dim=1)  # (N, 2*C_l, H_l, W_l)
-            fused = fuse_conv(fused)                  # (N, C_l, H_l, W_l)
+            # Level 0: stems for prior + first x layer
+            out_s_a = self.stem_s_a(a)
+            out_s_b = self.stem_s_b(b)
+            out_s = self.stem_s_fuse(
+                torch.cat([out_s_a, out_s_b], dim=1)
+            )  # (N, chans, H, W)
+
+            out_x = self.down_sample_layers_x[0](out_x)  # (N, chans, H, W)
+
+            fused = self.skip_fuse_convs[0](
+                torch.cat([out_s, out_x], dim=1)
+            )
             stack.append(fused)
 
-            # Downsample both streams for next level
             out_s = F.avg_pool2d(out_s, kernel_size=2, stride=2, padding=0)
             out_x = F.avg_pool2d(out_x, kernel_size=2, stride=2, padding=0)
 
-        #  Bottleneck
-        bottom = torch.cat([out_s, out_x], dim=1)  # (N, 2*ch, H_b, W_b)
-        bottom = self.bottom_fuse(bottom)          # (N, ch, H_b, W_b)
-        output = self.conv(bottom)                 # (N, 2*ch, H_b, W_b)
+            # Levels 1..L-1: run the remaining pyramids
+            for i in range(1, self.num_pool_layers):
+                out_s = self.down_sample_layers_s[i - 1](out_s)
+                out_x = self.down_sample_layers_x[i](out_x)
 
-        #  Up-sampling / decoding
+                fused = self.skip_fuse_convs[i](
+                    torch.cat([out_s, out_x], dim=1)
+                )
+                stack.append(fused)
+
+                out_s = F.avg_pool2d(out_s, kernel_size=2, stride=2, padding=0)
+                out_x = F.avg_pool2d(out_x, kernel_size=2, stride=2, padding=0)
+
+        else:
+            out_s = s
+            # Original behavior: both have num_pool_layers convs
+            for i in range(self.num_pool_layers):
+                out_s = self.down_sample_layers_s[i](out_s)
+                out_x = self.down_sample_layers_x[i](out_x)
+
+                fused = self.skip_fuse_convs[i](
+                    torch.cat([out_s, out_x], dim=1)
+                )
+                stack.append(fused)
+
+                out_s = F.avg_pool2d(out_s, kernel_size=2, stride=2, padding=0)
+                out_x = F.avg_pool2d(out_x, kernel_size=2, stride=2, padding=0)
+
+        # Bottleneck
+        bottom = self.bottom_fuse(torch.cat([out_s, out_x], dim=1))
+        output = self.conv(bottom)
+
+        # Decoder
         for transpose_conv, conv in zip(self.up_transpose_conv, self.up_conv):
             skip = stack.pop()
             output = transpose_conv(output)
 
-            # reflect pad if needed to match skip spatial dims (odd sizes)
             padding = [0, 0, 0, 0]
             if output.shape[-1] != skip.shape[-1]:
-                padding[1] = 1  # pad right
+                padding[1] = 1
             if output.shape[-2] != skip.shape[-2]:
-                padding[3] = 1  # pad bottom
+                padding[3] = 1
             if padding[1] or padding[3]:
                 output = F.pad(output, padding, mode="reflect")
 
@@ -487,6 +539,7 @@ class H(nn.Module):
         in_chans: int = 11,
         out_chans: int = 2,
         drop_prob: float = 0.0,
+        prior_split: Optional[Tuple[int, int]] = None,
     ):
         super().__init__()
         self.deunet = DualEncoderUnet(
@@ -496,6 +549,7 @@ class H(nn.Module):
             chans=chans,
             num_pool_layers=num_pools,
             drop_prob=drop_prob,
+            prior_split=prior_split,
         )
 
     def _norm_tensor(
@@ -749,6 +803,8 @@ class TGVN(nn.Module):
         Phi_chans: int = 18,
         H_chans: int = 12,
         pools: int = 4,
+        H_in_chans: int = 11,
+        H_prior_split: Optional[Tuple[int, int]] = None,
     ):
         """
         Args:
@@ -766,7 +822,10 @@ class TGVN(nn.Module):
             [
                 TGVNBlock(
                     Phi(Phi_chans, pools),
-                    H(H_chans, pools)
+                    H(
+                        H_chans, pools, in_chans=H_in_chans,
+                        prior_split=H_prior_split
+                    ),
                 ) for _ in range(num_cascades)
             ]
         )

@@ -58,8 +58,14 @@ class SliceDataset(torch.utils.data.Dataset):
                 self.npz_path, 'prior_t2w', str(prior_accession) + '.npz'
             ), mmap_mode='r'
         ) as npz:
-            prior = npz['volume'].astype(np.float32, copy=False)
-
+            prior_t2w = npz['volume'].astype(np.float32, copy=False)
+        with np.load(
+            os.path.join(
+                self.npz_path, 'prior_flair', str(prior_accession) + '.npz'
+            ), mmap_mode='r'
+        ) as npz:
+            prior_flair = npz['volume'].astype(np.float32, copy=False)
+        prior = np.stack([prior_t2w, prior_flair], axis=0)
         num_pe = row['num_pe']
         recon_size = eval(row['recshape'])
         return self.transform(
@@ -117,13 +123,14 @@ class TGVNDataTransform:
         r_outside_lines = num_outside_lines - l_outside_lines
 
         # Select matching slices from prior volume
-        lp = prior.shape[0]
+        lp = prior.shape[1]  # index 0 is the contrast dimension
         lc = vol_num_slices
         half = self.buffer_size // 2
         left = slice_idx + lp - lc - half
         right = slice_idx + lp - lc + half + 1
         indices = np.arange(left, right)
-        prior = prior[indices, ...]
+        prior = prior[:, indices, ...]
+        prior = torch.cat([prior[0], prior[1]], dim=0)
 
         # Normalize prior volume so that it is zero mean and unit std
         mus = prior.mean(dim=(-2, -1), keepdim=True)
