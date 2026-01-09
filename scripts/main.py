@@ -129,6 +129,7 @@ class TGVNLightning(L.LightningModule):
         self.lr_gamma = lr_gamma
         self.warmup_epochs = warmup_epochs
         self.weight_decay = weight_decay
+        self.H_in_chans = H_in_chans
         if self.model_type == 'TGVN':
             self.model = TGVN(
                 num_cascades=num_cascades,
@@ -137,6 +138,15 @@ class TGVNLightning(L.LightningModule):
                 H_chans=H_chans,
                 H_in_chans=H_in_chans,
                 H_prior_split=H_prior_split,
+            )
+        elif self.model_type == 'TGVNBASELINE':
+            self.model = TGVN(
+                num_cascades=num_cascades,
+                sens_chans=sens_chans,
+                Phi_chans=Phi_chans,
+                H_chans=H_chans,
+                H_in_chans=H_in_chans,
+                H_prior_split=None,
             )
         elif self.model_type == 'VN':
             self.model = VN(
@@ -208,6 +218,11 @@ class TGVNLightning(L.LightningModule):
                 kspace, mask, prior, recon_size
 
             )
+        elif self.model_type == 'TGVNBASELINE':
+            prior = prior[:, :self.H_in_chans, ...]
+            pred = self.model(
+                kspace, mask, prior, recon_size
+            )
         else:
             pred = self.model(
                 kspace, mask, recon_size
@@ -258,7 +273,11 @@ class TGVNLightning(L.LightningModule):
         if self.model_type == 'TGVN':
             pred = self.model(
                 kspace, mask, prior, recon_size
-
+            )
+        elif self.model_type == 'TGVNBASELINE':
+            prior = prior[:, :self.H_in_chans, ...]
+            pred = self.model(
+                kspace, mask, prior, recon_size
             )
         else:
             pred = self.model(
@@ -301,7 +320,11 @@ class TGVNLightning(L.LightningModule):
         if self.model_type == 'TGVN':
             pred = self.model(
                 kspace, mask, prior, recon_size
-
+            )
+        elif self.model_type == 'TGVNBASELINE':
+            prior = prior[:, :self.H_in_chans, ...]
+            pred = self.model(
+                kspace, mask, prior, recon_size
             )
         else:
             pred = self.model(
